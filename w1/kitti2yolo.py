@@ -64,7 +64,7 @@ def toBbox(rleObjs):
         return _mask.toBbox([rleObjs])[0]
 
 
-def convert_kitti_mots_to_yolo(instance_txt_folder, output_folder, img_width=1224, img_height=370):
+def convert_kitti_mots_to_yolo(instance_txt_folder, output_folder, img_width=1242, img_height=375):
     '''Converts KITTI MOTS instance segmentation annotations to YOLO format.
 
     Args:
@@ -124,6 +124,10 @@ def convert_kitti_mots_to_yolo(instance_txt_folder, output_folder, img_width=122
                 img_id = int(parts[0])  # First column is img_id
                 track_id = int(parts[1]) # Second column is track id (not used here)
                 class_id = int(parts[2])  # 1 = Car, 2 = Pedestrian
+                if class_id == 1:
+                    class_id = 2 # 2 = Car in Yolo
+                elif class_id == 2:
+                    class_id = 0 # 0 = Person in Yolo
                 rle_data = {
                     'size': [int(parts[3]), int(parts[4])],
                     'counts': parts[5].encode('utf-8')
@@ -139,7 +143,7 @@ def convert_kitti_mots_to_yolo(instance_txt_folder, output_folder, img_width=122
                 h /= img_height
 
                 if class_id != 10: # filter dont care ids
-                    yolo_line = f'{class_id - 1} {x_center:.6f} {y_center:.6f} {w:.6f} {h:.6f}\n'
+                    yolo_line = f'{class_id} {x_center:.6f} {y_center:.6f} {w:.6f} {h:.6f}\n'
                     if img_id not in img_data:
                         img_data[img_id] = []
                     img_data[img_id].append(yolo_line)
@@ -176,7 +180,7 @@ def create_folders(base_path):
         os.makedirs(os.path.join(base_path, 'labels', split), exist_ok=True)
 
 
-def process_images_and_labels(base_dir, output_dir_name, instance_txt_dir, img_width=1224, img_height=370):
+def process_images_and_labels(base_dir, output_dir_name, instance_txt_dir, img_width=1242, img_height=375):
     '''Processes images and labels from the KITTI MOTS dataset and converts them to YOLO format.
 
     Args:
@@ -248,4 +252,4 @@ if __name__ == "__main__":
     # Dir name for YOLO dataset
     output_dir_name = 'dataset_yolo'
     # Convert dataset from Kitti format to YOLO format and directory structure
-    process_images_and_labels(base_dir, output_dir_name, instance_txt_dir, img_width=1224, img_height=370)
+    process_images_and_labels(base_dir, output_dir_name, instance_txt_dir)
