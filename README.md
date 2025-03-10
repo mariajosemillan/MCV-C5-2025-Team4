@@ -76,3 +76,5 @@ The repository contains the following main scripts:
 - yolo.py: Script to run YOLOv8 on KITTI-MOTS.
 
 - yolo2coco.py: Conversion of YOLO annotations to COCO format.
+
+- [Project_presentation.pdf](Team4/blob/main/w1/Project_presentation.pdf): slides with main tasks and results.
