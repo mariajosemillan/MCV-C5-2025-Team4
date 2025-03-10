@@ -10,6 +10,7 @@ from detectron2.utils.visualizer import Visualizer
 from detectron2.data import MetadataCatalog, DatasetCatalog, build_detection_test_loader, build_detection_train_loader
 from detectron2.data.datasets import register_coco_instances
 from detectron2.evaluation import COCOEvaluator, inference_on_dataset, verify_results
+from detectron2.structures import Instances, BoxMode
 
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.engine import hooks
@@ -19,10 +20,98 @@ import detectron2.utils.comm as comm
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
+from detectron2.data import DatasetMapper, detection_utils
+# from detectron2.data import detection_utils as utils
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 from detectron2.data import DatasetMapper
-from detectron2.data import detection_utils as utils
+import detectron2.data.detection_utils as utils
 
-from detectron2.structures import Instances, Boxes
+# def get_augmentations() -> A.Compose:
+# 	"""Get the augmentations to apply.
+
+# 	Returns:
+# 		A.Compose: Compose of augmentations from albumentations.
+# 	"""
+# 	return A.Compose([
+#         A.HorizontalFlip(p=0.5),
+#         A.ShiftScaleRotate(p=0.2),
+#         A.RandomBrightnessContrast(p=0.3),
+#     ], bbox_params=A.BboxParams(format='coco', min_area=200, min_visibility=0.1, label_fields=['category_ids']))
+
+def get_augmentations() -> A.Compose:
+	"""Get the augmentations to apply.
+
+	Returns:
+		A.Compose: Compose of augmentations from albumentations.
+	"""
+	return A.Compose([
+        A.OneOf([
+			A.RandomCrop(width=500, height=500),
+			A.RandomCrop(width=400, height=150),
+		]),
+        A.ShiftScaleRotate(p=0.2),
+        #A.MotionBlur(blur_limit=(5, 15), allow_shifted=False, angle=[0, 0], direction=[0, 0], p=0.4),
+        A.RandomBrightnessContrast(p=0.15),
+    ], bbox_params=A.BboxParams(format='coco', min_area=200, min_visibility=0.1, label_fields=['category_ids']))
+
+class AlbumentationsMapper(DatasetMapper):
+    def __init__(self, cfg, is_train=True, augmentations=None):
+        """Initializes albumentations mapper.
+
+        Args:
+            cfg (Any): Configuration for the model.
+            is_train (bool, optional): Whether is train dataset. Defaults to True.
+            augmentations (Any, optional): Augmentations from albumentations to apply. Defaults to None.
+        """
+        super().__init__(cfg, is_train)
+        self.augmentations = augmentations
+
+    def __call__(self, dataset_dict):
+        dataset_dict = dataset_dict.copy()
+        image = cv2.imread(dataset_dict["file_name"]) 
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        if self.is_train and "annotations" in dataset_dict:
+            annotations = dataset_dict.pop("annotations")
+
+            # Filtrar bounding boxes inválidos (width = 0 o height = 0)
+            valid_annotations = [
+                obj for obj in annotations if obj["bbox"][2] > 0 and obj["bbox"][3] > 0
+            ]
+
+            if valid_annotations:  # Aplicar transformaciones solo si hay bboxes válidos
+                bboxes = [obj["bbox"] for obj in valid_annotations]
+                category_ids = [obj["category_id"] for obj in valid_annotations]
+                
+                transformed = self.augmentations(image=image, bboxes=bboxes, category_ids=category_ids)
+                image = transformed["image"]
+                
+                # Update the bounding boxes with transformed coordinates
+                for i, annotation in enumerate(valid_annotations):
+                    if i < len(transformed["bboxes"]):
+                        annotation["bbox"] = transformed["bboxes"][i]
+                
+                # Convert to Instances format for Detectron2
+                annos = []
+                for annotation in valid_annotations:
+                    obj = {
+                        "bbox": annotation["bbox"],
+                        "bbox_mode": annotation.get("bbox_mode", BoxMode.XYWH_ABS),
+                        "category_id": annotation["category_id"],
+                        "iscrowd": annotation.get("iscrowd", 0),
+                    }
+                    annos.append(obj)
+                
+                # Create Instances object with the correct image size
+                instances = detection_utils.annotations_to_instances(annos, image.shape[:2])
+                dataset_dict["instances"] = instances
+        
+        # Convert to CHW format
+        image = image.transpose(2, 0, 1)
+        dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image))
+        
+        return dataset_dict
 
 def setup_predictor():
     '''Sets up the predictor with the model configuration and weights.
@@ -36,30 +125,13 @@ def setup_predictor():
             - DefaultPredictor: The predictor object initialized with the configuration.
             - CfgNode: The configuration object used to set up the model.
     '''
-    # cfg = config.get_cfg()
-    # # cfg.merge_from_file(model_zoo.get_config_file(MODEL_CONFIG))
-    # cfg.merge_from_file("/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/output_faster_rcnn_R_50_FPN_3x_finetune_SGD/_exp3/config.yaml")
-    # # cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(MODEL_CONFIG)  # Pre-trained model weights
-    # MODEL_WEIGHTS = "/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/output_faster_rcnn_R_50_FPN_3x_finetune_SGD/_exp3/model_final.pth"
-    # cfg.MODEL.WEIGHTS = MODEL_WEIGHTS # Uncomment to use custom model weights
-    # cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # Confidence threshold for inference
-    # cfg.MODEL.DEVICE = "cuda"
-
-    dataset_train_json_path = f"/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/train_coco_car1_finetune_2.json"
-    dataset_train_images_path = f"/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/dataset_yolo_finetune_2/images/train"
-    dataset_val_json_path = f"/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/val_coco_car1_finetune_2.json"
-    dataset_val_images_path = f"/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/dataset_yolo_finetune_2/images/val"
-    dataset_train = "dataset_train"
-    register_my_dataset(dataset_train, json_path=dataset_train_json_path, images_path=dataset_train_images_path)  # Register the dataset before evaluation
-    dataset_val = "dataset_val"
-    register_my_dataset(dataset_val, json_path=dataset_val_json_path, images_path=dataset_val_images_path)  # Register the dataset before evaluation
-
-    cfg = setup_training(MODEL_CONFIG, MODEL_CONFIG, dataset_train, dataset_val, freeze_at=3, freeze_fpn=False, freeze_rpn=False, freeze_roi=False, lr=1e-4, optimizer="SGD", max_iters=5000)
-    cfg.MODEL_WEIGHTS = "/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/output_faster_rcnn_R_50_FPN_3x_finetune_SGD/_exp3/model_final.pth"
-    dataset_name = "dataset_test"
-    register_my_dataset(dataset_name, json_path="/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/test_coco_car1_finetune_test.json", images_path="/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/dataset_yolo_finetune/images/test")  # Register the dataset before evaluation
-    cfg.DATASETS.TEST = (dataset_name,)
-
+    cfg = config.get_cfg()
+    cfg.merge_from_file(model_zoo.get_config_file(MODEL_CONFIG))
+    cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(MODEL_CONFIG)  # Pre-trained model weights
+    # cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(MODEL_WEIGHTS) # Uncomment to use custom model weights
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # Confidence threshold for inference
+    cfg.MODEL.DEVICE = "cuda"
+    
     predictor = DefaultPredictor(cfg)
     
     return predictor, cfg
@@ -102,23 +174,20 @@ def detectron2_run_inference_in_directory(predictor, cfg, input_dir, output_dir,
 
         # Perform inference
         outputs = predictor(img)
-        print(outputs)
+
         instances = outputs["instances"].to("cpu")
-        # selected_instances = instances[0]
+        
         # Filter instances for the classes of interest
         selected_indices = torch.isin(instances.pred_classes, torch.tensor(classes))
         # Select instances that belong to the desired classes
         selected_instances = instances[selected_indices]
-        print(selected_indices)
-        print(instances.pred_classes)
+
         if selected_instances.has("pred_boxes") and selected_instances.has("pred_classes"):
-            v = Visualizer(img[:, :, ::-1], MetadataCatalog.get(cfg.DATASETS.TEST[0]), scale=1)
+            v = Visualizer(img[:, :, ::-1], MetadataCatalog.get(cfg.DATASETS.TRAIN[0]), scale=1)
             v = v.draw_instance_predictions(selected_instances)
             result_img = v.get_image()[:, :, ::-1]
         else:
             result_img = img  # If no predictions, just save the original image
-            print("NO PREDICTIONS, SAVING ORIGINAL IMAGE")
-
 
         # Save the resulting image with predictions
         output_path = os.path.join(output_folder, os.path.basename(image_file))
@@ -143,8 +212,7 @@ def detectron2_run_inference(input_dir, output_dir, classes):
     predictor, cfg = setup_predictor()
 
     # Define the directories to process
-    # subdirs = ["train", "val"] # ["test"]
-    subdirs = ["test"]
+    subdirs = ["train", "val"] # ["test"]
 
     # Process images in each subdirectory
     for subdir in subdirs:
@@ -174,8 +242,7 @@ def detectron2_run_eval(dataset_dir_json, dataset_dir_images, config_file="COCO-
     cfg = config.get_cfg()
     cfg.merge_from_file(model_zoo.get_config_file(config_file))  # Load pretrained model config
     # cfg.MODEL.WEIGHTS = weights_file  # Especificar los pesos del modelo entrenado
-    # cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(weights_file) # Load model weights
-    cfg.MODEL.WEIGHTS = "/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/output_faster_rcnn_R_50_FPN_3x_finetune_SGD/_exp3/model_final.pth"
+    cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(weights_file) # Load model weights
     cfg.DATASETS.TEST = (f"{dataset_name}",)  # Set evaluation dataset
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # Confidence threshold for detections
 
@@ -205,9 +272,9 @@ def register_my_dataset(dataset_name, json_path, images_path):
     
     metadata = MetadataCatalog.get("dataset_val")
     # Assign class names (must match the dataset annotations)
-    # metadata.thing_classes = MetadataCatalog.get("coco_2017_val").thing_classes
+    # metadata.thing_classes = MetadataCatalog.get("coco_2017_val").thing_classes # FOR EVAL USE THIS
     # Assign classes manually
-    metadata.thing_classes = ["pedestrian", "car"]
+    metadata.thing_classes = ['creatures', 'fish', 'jellyfish', 'penguin', 'puffin', 'shark', 'starfish', 'stingray'] # FOR FINETUNE USE THIS
     print(f"Classes in the dataset: {metadata.thing_classes}")
 
 class MyTrainer(DefaultTrainer):
@@ -216,17 +283,23 @@ class MyTrainer(DefaultTrainer):
         if output_folder is None:
             output_folder = os.path.join(cfg.OUTPUT_DIR, "evaluator")
         return COCOEvaluator(dataset_name, cfg, False, output_folder)
-    # @classmethod
-    # def build_train_loader(cls, cfg):
-    #     return build_detection_train_loader(cfg, mapper=AlbumentationsMapper())
+    
+    @classmethod
+    def build_train_loader(cls, cfg):
+        mapper = AlbumentationsMapper(cfg, is_train=True, augmentations=get_augmentations())
+        return build_detection_train_loader(cfg, mapper=mapper)
 
-def setup_training(model_cfg, model_weights, dataset_train, dataset_val, freeze_at, freeze_fpn=False, freeze_rpn=False, freeze_roi=False, lr=0.001, optimizer="AdamW", max_iters=5000, output_dir='./output/'):
+def setup_training(model_cfg, model_weights, dataset_train, dataset_val, freeze_at, freeze_fpn=False, freeze_rpn=False, freeze_roi=False, output_dir='./output/'):
     cfg = config.get_cfg()
     cfg.merge_from_file(model_zoo.get_config_file(f"{model_cfg}"))
 
     cfg.DATASETS.TRAIN = (dataset_train,)
     cfg.DATASETS.VAL = (dataset_val,)
-    cfg.DATASETS.TEST = (dataset_val,)
+
+    dataset_name = "dataset_test"
+    register_my_dataset(dataset_name, json_path="/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/aquarium/test/_annotations.coco.json", images_path="/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/aquarium/test")    # Register the dataset before evaluation
+    cfg.DATASETS.TEST = (dataset_name,)
+    # cfg.DATASETS.TEST = (dataset_val,)
 
     cfg.OUTPUT_DIR = output_dir
     os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
@@ -240,18 +313,15 @@ def setup_training(model_cfg, model_weights, dataset_train, dataset_val, freeze_
 
     cfg.SOLVER.IMS_PER_BATCH = 4
     
-    cfg.SOLVER.CHECKPOINT_PERIOD = max_iters//10
+    cfg.SOLVER.CHECKPOINT_PERIOD = 5000
+
+    # Cambiar el optimizador de AdamW a SGD
+    cfg.SOLVER.OPTIMIZER = "AdamW"  # Opción "SGD" o "AdamW"
 
     # Configuración de parámetros para SGD
-    cfg.SOLVER.BASE_LR = lr
-
-    if optimizer == "SGD":
-        cfg.SOLVER.MOMENTUM = 0.9  # Solo para SGD
-        cfg.SOLVER.WEIGHT_DECAY = 0.0001
-    cfg.SOLVER.OPTIMIZER = optimizer
+    cfg.SOLVER.BASE_LR = 0.0001
     
-    cfg.SOLVER.MAX_ITER = max_iters
-    
+    cfg.SOLVER.MAX_ITER = 10000
     cfg.SOLVER.STEPS = []
     
 
@@ -284,21 +354,16 @@ def setup_training(model_cfg, model_weights, dataset_train, dataset_val, freeze_
     
     cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128 # Batch size for ROI proposals
 
-    weight_person = 1 / 7016/19767
-    weight_car = 1 / 12751/19767
-    cfg.MODEL.ROI_HEADS.LOSS_WEIGHT = [weight_person, weight_car]
+    # weight_person = 7016/19767
+    # weight_car = 12751/19767
+    # cfg.MODEL.ROI_HEADS.LOSS_WEIGHT = [weight_person, weight_car]
 
-    cfg.MODEL.ROI_BOX_HEAD.BBOX_REG_LOSS_WEIGHT = 2.0  # Aumenta el peso de la pérdida de regresión de cajas
-    cfg.MODEL.RPN.BBOX_REG_LOSS_WEIGHT = 1  # Reduce la pérdida de regresión del RPN
+    # cfg.MODEL.ROI_BOX_HEAD.BBOX_REG_LOSS_WEIGHT = 2.0  # Aumenta el peso de la pérdida de regresión de cajas
+    # cfg.MODEL.RPN.BBOX_REG_LOSS_WEIGHT = 1  # Reduce la pérdida de regresión del RPN
 
-    cfg.MODEL.ROI_HEADS.NUM_CLASSES = 2
+    cfg.MODEL.ROI_HEADS.NUM_CLASSES = 7
     
-    cfg.TEST.EVAL_PERIOD = max_iters//10
-
-    # Guardar configuración en un archivo txt
-    config_path = os.path.join(cfg.OUTPUT_DIR, "config.txt")
-    with open(config_path, "w") as f:
-        f.write(cfg.dump())  # Guardar la configuración completa en formato YAML
+    # cfg.TEST.EVAL_PERIOD = 1000
 
     return cfg
 
@@ -352,6 +417,9 @@ def train(cfg, dataset_val=None):
     # trainer = DefaultTrainer(cfg)
     trainer = MyTrainer(cfg)
 
+    # # Reemplazar el dataloader con el que usa Albumentations
+    # trainer.data_loader = build_detection_train_loader(cfg, mapper=AlbumentationsMapper(cfg, is_train=True))
+
     # Create a custom validation loss object
     val_loss = ValidationLoss(cfg)
 
@@ -380,20 +448,28 @@ def detectron2_run_finetune(dataset_train_json, dataset_train_images, dataset_va
         # (5, True, False, False), # Exp3
         # (5, False, False, False),# Exp4
         # (4, False, False, False),# Exp5
-        # (3, False, False, False, 0.01, "SGD", 5000),# Exp6
-        # (3, False, False, False, 0.001, "SGD", 5000),# Exp6
-        # (3, False, False, False, 0.0001, "SGD", 5000),# Exp6
-        (3, False, False, False, 0.00001, "AdamW", 5000),# Exp6
+        (3, False, False, False),# Exp6
         # (2, False, False, False),# Exp7
         # (0, False, False, False) # Exp8
     ]
-    for exp_id, (freeze_at, freeze_fpn, freeze_rpn, freeze_roi, lr, optimizer, max_iters) in enumerate(experiments, start=1):
+    for exp_id, (freeze_at, freeze_fpn, freeze_rpn, freeze_roi) in enumerate(experiments, start=1):
         output_dir_exp = get_next_experiment_folder(output_dir)
         print(f"Running Experiment {exp_id}: FREEZE_AT={freeze_at}, FPN={'🔒' if freeze_fpn else '🔓'}, RPN={'🔒' if freeze_rpn else '🔓'}, ROI={'🔒' if freeze_roi else '🔓'}")
-        print(f"Other params: LR={lr}, OPTIMIZER={optimizer}, MAX_ITERS={max_iters}")
-        cfg = setup_training(model_cfg, model_weights, dataset_train, dataset_val, freeze_at, freeze_fpn, freeze_rpn, freeze_roi, lr, optimizer, max_iters, output_dir_exp)
+        cfg = setup_training(model_cfg, model_weights, dataset_train, dataset_val, freeze_at, freeze_fpn, freeze_rpn, freeze_roi, output_dir_exp)
         train(cfg, dataset_val)
         print(f"Experiment {exp_id} completed. Results saved in {output_dir_exp}\n")
+
+        dataset_name = "dataset_test"
+        register_my_dataset(dataset_name, json_path="/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/aquarium/_annotations.coco.json", images_path="/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/aquarium/test")  # Register the dataset before evaluation
+        cfg.DATASETS.TEST = (dataset_name,)
+
+        predictor = DefaultPredictor(cfg)
+        subdirs = "test"
+        input_dir = f"/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/aquarium/"
+        output_dir = "/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/output_faster_rcnn_R_50_FPN_3x_eval_inf"
+        detectron2_run_inference_in_directory(predictor, cfg, input_dir, output_dir, subdirs, [0, 1])
+
+
 
 def get_next_experiment_folder(base_output_dir):
     os.makedirs(base_output_dir, exist_ok=True)
@@ -416,30 +492,28 @@ if __name__ == "__main__":
     # MODEL_WEIGHTS = "model_final_f10217.pkl"  # Path to the pre-trained model weights file a custom model
     DATASET_DIR = "/ghome/c5mcv04/MCV-C5-2025-Team4/dataset"
     
-    OUTPUT_DIR = f"{DATASET_DIR}/output_{MODEL_NAME}_{args.mode}_inf"
+    OUTPUT_DIR = f"{DATASET_DIR}/output_{MODEL_NAME}_{args.mode}_shift"
     # OUTPUT_DIR = get_next_experiment_folder(BASE_OUTPUT_DIR)
     # print(f"\n✅ Results will be saved in: {OUTPUT_DIR}\n")
     # OUTPUT_DIR = f"{DATASET_DIR}/output_{MODEL_NAME}_{args.mode}"  # Folder where results will be saved
 
-    CLASSES_TO_DETECT = [0, 1] # COCO class indices: 0 = person, 2 = car
+    CLASSES_TO_DETECT = [0, 1,2,3,4,5,6,7] # COCO class indices: 0 = person, 2 = car
 
     if args.mode == "inference":
-        INPUT_DIR = f"{DATASET_DIR}/dataset_yolo_finetune/images"  # Path to the dataset with 'train' and 'val' folders
+        INPUT_DIR = f"{DATASET_DIR}/dataset_yolo/images"  # Path to the dataset with 'train' and 'val' folders
         detectron2_run_inference(input_dir=INPUT_DIR, output_dir=OUTPUT_DIR, classes=CLASSES_TO_DETECT) # Run inference on all images in the dataset
     elif args.mode == "eval":
-        INPUT_DIR = f"{DATASET_DIR}/dataset_yolo/images"  # Path to the dataset with 'train' and 'val' folders
+        INPUT_DIR = f"{DATASET_DIR}/aquarium"  # Path to the dataset with 'train' and 'val' folders
         weights_path = "COCO-Detection/faster_rcnn_R_50_FPN_3x.yaml"
-        # dataset_json_path = f"{DATASET_DIR}/val_coco_eval.json"
-        dataset_json_path = "/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/test_coco_car1_finetune_test.json"
-        # dataset_images_path = f"{DATASET_DIR}/dataset_yolo/images/val"
-        dataset_images_path = "/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/dataset_yolo_finetune/images/test"
+        dataset_json_path = f"{DATASET_DIR}/val_coco.json"
+        dataset_images_path = f"{DATASET_DIR}/aquarium/val"
         detectron2_run_eval(dataset_dir_json=dataset_json_path, dataset_dir_images=dataset_images_path, weights_file=weights_path, output_dir=OUTPUT_DIR)
     elif args.mode == "finetune":
-        INPUT_DIR = f"{DATASET_DIR}/dataset_yolo_finetune_2/images"  # Path to the dataset with 'train' and 'val' folders
-        # weights_path = "COCO-Detection/faster_rcnn_R_50_FPN_3x.yaml"
-        weights_path = ""
-        dataset_train_json_path = f"{DATASET_DIR}/train_coco_car1_finetune_2.json"
+        INPUT_DIR = f"{DATASET_DIR}/aquarium"  # Path to the dataset with 'train' and 'val' folders
+        weights_path = "COCO-Detection/faster_rcnn_R_50_FPN_3x.yaml"
+        # weights_path = ""
+        dataset_train_json_path = f"{DATASET_DIR}/aquarium/train/_annotations.coco.json"
         dataset_train_images_path = f"{INPUT_DIR}/train"
-        dataset_val_json_path = f"{DATASET_DIR}/val_coco_car1_finetune_2.json"
-        dataset_val_images_path = f"{INPUT_DIR}/val"
+        dataset_val_json_path = f"{DATASET_DIR}/aquarium/valid/_annotations.coco.json"
+        dataset_val_images_path = f"{INPUT_DIR}/valid"
         detectron2_run_finetune(dataset_train_json_path, dataset_train_images_path, dataset_val_json_path, dataset_val_images_path, model_cfg=MODEL_CONFIG, model_weights=MODEL_CONFIG, output_dir=OUTPUT_DIR)
