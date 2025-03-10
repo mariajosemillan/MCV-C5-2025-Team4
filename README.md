@@ -67,9 +67,9 @@ The repository contains the following main scripts:
 
 - detectron2_faster_rcnn.py: Implementation of Faster R-CNN using Detectron2.
 
-- detectron_finetune.py: Fine-tuning of Faster R-CNN and DeTR on KITTI-MOTS.
+- detectron_finetune.py: Fine-tuning of Faster R-CNN on KITTI-MOTS.
 
-- detectron_finetune_domain_shift_eval.py: Fine-tuning and evaluation for domain shift using the DeART dataset.
+- detectron_finetune_domain_shift_eval.py: Fine-tuning and evaluation for domain shift using the Aquarium dataset.
 
 - kitti2yolo.py: Conversion of KITTI-MOTS dataset to YOLO format.
 
