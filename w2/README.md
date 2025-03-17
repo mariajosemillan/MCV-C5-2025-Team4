@@ -66,7 +66,8 @@ The repository contains the following main scripts:
 - detectron2_seg.py: Script to run inference, evaluation or fine-tuning using Detectron2.
 - utils.py: Scripts with auxiliary classes and functions for detectron2_seg script.
 - yolo_seg.py: Script to run inference, evaluation or fine-tuning using YOLO.
-- mask2former.py: Script to run inference, evaluation or fine-tuning using mask2former.
+- mask2former.py: Script to run inference using mask2former.
+- mask2former_finetune.py: Script based on [this project](https://github.com/huggingface/transformers/blob/main/examples/pytorch/instance-segmentation/run_instance_segmentation.py) for finetuning.
 - kitti2yolo.py: Conversion of KITTI-MOTS dataset to YOLO format.
 - kitti2coco.py: Conversion of KITTI-MOTS dataset to COCO format.
 - [Project_presentation.pdf](Project_presentation.pdf): slides with main tasks and results.
