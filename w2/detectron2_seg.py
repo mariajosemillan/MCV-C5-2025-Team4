@@ -6,7 +6,7 @@ import torch
 import argparse
 import numpy as np
 from detectron2 import config, model_zoo
-from detectron2.engine import DefaultPredictor
+from detectron2.engine import DefaultPredictor, DefaultTrainer
 from detectron2.utils.visualizer import Visualizer
 from detectron2.data import MetadataCatalog, build_detection_test_loader
 from detectron2.data.datasets import register_coco_instances
@@ -14,6 +14,8 @@ from detectron2.evaluation import COCOEvaluator, inference_on_dataset
 from pycocotools.mask import encode
 from pycocotools.coco import COCO
 from detectron2.structures import Instances, Boxes
+
+from utils import *
 
 def setup_predictor(model_name, model_weights, conf_threshold=0.5):
     '''Sets up the Detectron2 predictor with the specified model configuration and weights.
@@ -34,13 +36,92 @@ def setup_predictor(model_name, model_weights, conf_threshold=0.5):
     '''
     cfg = config.get_cfg()
     cfg.merge_from_file(model_zoo.get_config_file(model_name))
-    cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(model_weights)
+    cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(model_weights) # Change to path to .pth for custom model weights
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = conf_threshold  # Confidence threshold for inference
     cfg.MODEL.DEVICE = "cuda"
 
     predictor = DefaultPredictor(cfg)
     
     return predictor, cfg
+
+def setup_trainer(model_name, model_weights, 
+                  dataset_train, dataset_val, dataset_test, 
+                  freeze_at, freeze_fpn=False, freeze_rpn=False, freeze_roi=False, 
+                  lr=1e-4, optimizer="SGD", max_iters=5000,
+                  output_dir='./output/'):
+    cfg = config.get_cfg()
+    cfg.merge_from_file(model_zoo.get_config_file(model_name))
+    
+    cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(model_weights) # Change to path to .pth for custom model weights
+
+    cfg.INPUT.MASK_FORMAT = "bitmask"
+
+    cfg.DATASETS.TRAIN = (dataset_train,)
+    cfg.DATASETS.VAL = (dataset_val,)
+    cfg.DATASETS.TEST = (dataset_test,)
+
+    cfg.OUTPUT_DIR = output_dir
+    os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
+
+    cfg.DATALOADER.NUM_WORKERS = 4
+
+    cfg.SOLVER.IMS_PER_BATCH = 4
+    
+    cfg.SOLVER.CHECKPOINT_PERIOD = max_iters
+
+    cfg.SOLVER.OPTIMIZER = optimizer  # Opción "SGD" o "AdamW"
+
+    # Configuración de parámetros para SGD
+    cfg.SOLVER.BASE_LR = lr
+    if optimizer=="SGD":
+        cfg.SOLVER.MOMENTUM = 0.9  # Solo para SGD
+        cfg.SOLVER.WEIGHT_DECAY = 0.0001
+    
+    cfg.SOLVER.MAX_ITER = max_iters
+    cfg.SOLVER.STEPS = []
+    
+
+    cfg.MODEL.BACKBONE.FREEZE_AT = freeze_at
+
+    # Control manual de congelación
+    def freeze_module(module):
+        for param in module.parameters():
+            param.requires_grad = False
+    
+    # Cargar el modelo temporalmente para modificar capas
+    model = DefaultTrainer.build_model(cfg)
+
+    if freeze_fpn:
+        freeze_module(model.backbone.fpn_lateral2)
+        freeze_module(model.backbone.fpn_output2)
+        freeze_module(model.backbone.fpn_lateral3)
+        freeze_module(model.backbone.fpn_output3)
+        freeze_module(model.backbone.fpn_lateral4)
+        freeze_module(model.backbone.fpn_output4)
+        freeze_module(model.backbone.fpn_lateral5)
+        freeze_module(model.backbone.fpn_output5)
+        freeze_module(model.backbone.top_block)
+    if freeze_rpn:
+        freeze_module(model.proposal_generator)
+    if freeze_roi:
+        freeze_module(model.roi_heads)
+
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5
+    
+    cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128 # Batch size for ROI proposals
+
+    # weight_person = 7016/19770
+    # weight_car = 12754/19770
+    # cfg.MODEL.ROI_HEADS.LOSS_WEIGHT = [weight_person, weight_car]
+
+    # cfg.MODEL.ROI_BOX_HEAD.BBOX_REG_LOSS_WEIGHT = 2.0  # Aumenta el peso de la pérdida de regresión de cajas
+    # cfg.MODEL.RPN.BBOX_REG_LOSS_WEIGHT = 1  # Reduce la pérdida de regresión del RPN
+
+    cfg.MODEL.ROI_HEADS.NUM_CLASSES = 2 # 7 for aquarium domain shift
+    
+    cfg.TEST.EVAL_PERIOD = max_iters
+
+    return cfg
 
 def detectron2_run_inference(model_name, model_weights, input_dir, output_dir, classes):
     '''Runs inference on images in the specified input directory using Detectron2.
@@ -84,22 +165,22 @@ def detectron2_run_inference(model_name, model_weights, input_dir, output_dir, c
             v = v.draw_instance_predictions(selected_instances)
             result_img = v.get_image()[:, :, ::-1]
 
-            # Extraer información para COCO JSON
+            # Extract info for COCO JSON
             pred_boxes = selected_instances.pred_boxes.tensor.numpy()
             pred_classes = selected_instances.pred_classes.numpy()
             scores = selected_instances.scores.numpy()
 
-            # Si hay segmentaciones, convertirlas a RLE
+            # If there are segmentations, convert to RLE
             if selected_instances.has("pred_masks"):
                 pred_masks = selected_instances.pred_masks.numpy()
                 rle_masks = [ 
-                            {"size": rle["size"], "counts": rle["counts"].decode("utf-8")}  # Decodificar bytes a string
+                            {"size": rle["size"], "counts": rle["counts"].decode("utf-8")}  # Decode bytes to string
                             for rle in [encode(np.asfortranarray(mask.astype(np.uint8))) for mask in pred_masks]
                         ]
             else:
-                rle_masks = [None] * len(pred_classes)  # Si no hay máscaras, asignar None
+                rle_masks = [None] * len(pred_classes)  # If no masks, assign None
 
-            # Guardar predicciones en formato COCO
+            # Save predictions in COCO format
             for i in range(len(pred_classes)):
                 x, y, w, h = pred_boxes[i]
                 coco_predictions.append({
@@ -107,7 +188,7 @@ def detectron2_run_inference(model_name, model_weights, input_dir, output_dir, c
                     "category_id": int(pred_classes[i]),
                     "bbox": [float(x), float(y), float(w), float(h)],
                     "score": float(scores[i]),
-                    "segmentation": rle_masks[i]  # Guardar en formato RLE
+                    "segmentation": rle_masks[i]  # Save in format RLE
                 })
         else:
             result_img = img  # If no predictions, just save the original image
@@ -121,7 +202,7 @@ def detectron2_run_inference(model_name, model_weights, input_dir, output_dir, c
         else:
             print(f"Error saving processed {image_file}. Output dir selected: {output_path}")
     
-    # Guardar el archivo JSON con predicciones
+    # Save JSON file with predictions
     json_output_path = os.path.join(output_dir, "predictions.json")
     with open(json_output_path, "w") as f:
         json.dump(coco_predictions, f, indent=4)
@@ -129,7 +210,7 @@ def detectron2_run_inference(model_name, model_weights, input_dir, output_dir, c
     print(f"Inference completed. Results in folder: '{output_dir}'.")
     print(f"Predictions saved in COCO format at: {json_output_path}")
 
-def register_my_dataset(dataset_name, json_path, images_path):
+def register_my_dataset(dataset_name, json_path, images_path, run_mode):
     '''Registers a dataset for use with Detectron2 using COCO format annotations.
 
     Args:
@@ -139,6 +220,11 @@ def register_my_dataset(dataset_name, json_path, images_path):
     '''
     # Register the dataset using a COCO JSON annotation file
     register_coco_instances(dataset_name, {}, json_path, images_path)
+    if run_mode=="finetune":
+        metadata = MetadataCatalog.get(dataset_name)
+        metadata.thing_classes = ["person", "car"] # FOR FINETUNE USE THIS
+        # metadata.thing_classes = ['fish', 'reefs', 'aquatic plants', 'wrecks/ruins', 'human divers', 'robots', 'sea-floor']
+        print(f"Classes in the dataset: {metadata.thing_classes}")
 
 def detectron2_run_eval(model_name, model_weights, dataset_dir_json, dataset_dir_images, conf_threshold=0.5, dataset_name="dataset_val", output_dir="./output/"):
     '''Evaluates a Detectron2 model using a COCO-format dataset and saves results to a text file.
@@ -153,7 +239,7 @@ def detectron2_run_eval(model_name, model_weights, dataset_dir_json, dataset_dir
         output_dir (str, optional): Directory where evaluation results will be saved. Defaults to "./output/".
     '''
     # Dataset configuration -- register dataset
-    register_my_dataset(dataset_name=dataset_name, json_path=dataset_dir_json, images_path=dataset_dir_images)  # Register the dataset before evaluation
+    register_my_dataset(dataset_name=dataset_name, json_path=dataset_dir_json, images_path=dataset_dir_images, run_mode="eval")  # Register the dataset before evaluation
     
     # Load model configuration
     cfg = config.get_cfg()
@@ -171,12 +257,79 @@ def detectron2_run_eval(model_name, model_weights, dataset_dir_json, dataset_dir
 
     # Perform inference and evaluation
     results = inference_on_dataset(predictor.model, test_loader, evaluator)
-    
+    print(results)
     # Save evaluation results to a txt file
     results_txt_path = f"{output_dir}/results.txt"
     with open(results_txt_path, "w") as f:
-        f.write(str(results["bbox"]))
+        f.write(str(results))
     print(f"Results saved to {results_txt_path}")
+
+def train(cfg, dataset_val=None):
+    # trainer = DefaultTrainer(cfg)
+    trainer = MyTrainer(cfg)
+
+    # Create a custom validation loss object
+    val_loss = ValidationLoss(cfg)
+
+    # Register the custom validation loss object as a hook to the trainer
+    trainer.register_hooks([val_loss])
+
+    # Swap the positions of the evaluation and checkpointing hooks so that the validation loss is logged correctly
+    trainer._hooks = trainer._hooks[:-2] + trainer._hooks[-2:][::-1]
+
+    # Resume training from a checkpoint or load the initial model weights
+    trainer.resume_or_load(resume=False)
+
+    trainer.train()
+
+def detectron2_run_finetune(model_name, model_weights, 
+                            dataset_train_json, dataset_train_images, 
+                            dataset_val_json, dataset_val_images, 
+                            dataset_test_json,dataset_test_images, 
+                            output_dir='./output/'):
+    # Register the datasets using a COCO JSON annotation file
+    dataset_train = "dataset_train"
+    register_my_dataset(dataset_train, json_path=dataset_train_json, images_path=dataset_train_images, run_mode="finetune")
+    
+    dataset_val = "dataset_val"
+    register_my_dataset(dataset_val, json_path=dataset_val_json, images_path=dataset_val_images, run_mode="finetune")
+    
+    dataset_test = "dataset_test"
+    register_my_dataset(dataset_test, json_path=dataset_test_json, images_path=dataset_test_images, run_mode="finetune")
+
+    experiments = [
+        # (5, True, True, True, 1e-4, "SGD", 10000),   # Exp
+        # (5, True, True, False),  # Exp
+        (5, True, False, False, 1e-4, "SGD", 2000), # Exp
+        # (5, False, False, False, 1e-4, "SGD"),# Exp1
+        # (4, False, False, False, 1e-4, "SGD"),# Exp2
+        # (3, False, False, False, 1e-4, "SGD", 20000),# Exp3
+        # (3, False, False, False, 1e-5, "SGD", 10000),# Exp4
+        # (3, False, False, False, 1e-3, "SGD"),# Exp5
+        # (2, False, False, False, 1e-4, "SGD"),# Exp6
+        # (0, False, False, False, 1e-4, "SGD") # Exp7
+    ]
+    for exp_id, (freeze_at, freeze_fpn, freeze_rpn, freeze_roi, lr, optimizer, max_iters) in enumerate(experiments, start=1):
+        output_dir_exp = get_next_experiment_folder(output_dir)
+        print(f"Running Experiment {exp_id}: FREEZE_AT={freeze_at}, FPN={'🔒' if freeze_fpn else '🔓'}, RPN={'🔒' if freeze_rpn else '🔓'}, ROI={'🔒' if freeze_roi else '🔓'}")
+        cfg = setup_trainer(model_name, model_weights, 
+                            dataset_train, dataset_val, dataset_test, 
+                            freeze_at, freeze_fpn, freeze_rpn, freeze_roi, 
+                            lr=lr, optimizer=optimizer, max_iters=max_iters,
+                            output_dir=output_dir_exp)
+        train(cfg, dataset_val)
+        print(f"Experiment {exp_id} completed. Results saved in {output_dir_exp}\n")
+
+        # dataset_name = "dataset_test"
+        # register_my_dataset(dataset_name, json_path="/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/test_coco_car1_finetune_test.json", images_path="/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/dataset_yolo_finetune/images/test")  # Register the dataset before evaluation
+        # cfg.DATASETS.TEST = (dataset_name,)
+
+        # predictor = DefaultPredictor(cfg)
+        # input_dir = f"/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/dataset_yolo_masks_finetune/images/test"
+        # input_dir = "/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/aquarium_segmentation/test"
+        # output_dir = "/ghome/c5mcv04/MCV-C5-2025-Team4/dataset/outputs/COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x_aquarium_best_model"
+        # os.makedirs(output_dir, exist_ok=True)
+        # detectron2_run_inference(predictor, cfg, input_dir, output_dir, [1, 2, 3, 4, 5, 6, 7])
 
 if __name__ == "__main__":
     # Argument parser to select the mode and model name
@@ -191,6 +344,8 @@ if __name__ == "__main__":
                         help="Path to the dataset directory containing images and annotations.")
     parser.add_argument("--json_path", type=str, 
                         help="Path to the COCO format JSON annotation file (required for 'eval' mode).")
+    parser.add_argument("--json_dir", type=str, 
+                        help=" (required for 'finetune' mode)")
     parser.add_argument("--output_dir", type=str, default="ghome/c5mcv04/MCV-C5-2025-Team4/dataset/output", 
                         help="Path to the output directory where results will be stored.")
     parser.add_argument("--classes", type=int, nargs="+", default=[0, 1], 
@@ -225,12 +380,48 @@ if __name__ == "__main__":
 
     if RUN_MODE == "inference":
         INPUT_DIR = f"{DATASET_DIR}"  # Path to the dataset with 'train' and 'val' folders
+    
         detectron2_run_inference(model_name=MODEL_CONFIG, model_weights=MODEL_WEIGHTS, input_dir=INPUT_DIR, output_dir=OUTPUT_DIR, classes=CLASSES_TO_DETECT) # Run inference on all images in the dataset
+    
     elif RUN_MODE == "eval":
         INPUT_DIR_IMAGES = f"{DATASET_DIR}"
+        
+        # Check if json_path argument was provided
         if not args.json_path:
             print("Error: --json_path is required when --run_mode is 'eval'.", file=sys.stderr)
             sys.exit(1)
         INPUT_DIR_JSON = args.json_path
+        
         CONF_THRESHOLD = args.conf_threshold
+        
         detectron2_run_eval(model_name=MODEL_CONFIG, model_weights=MODEL_WEIGHTS, dataset_dir_images=INPUT_DIR_IMAGES, dataset_dir_json=INPUT_DIR_JSON, conf_threshold=CONF_THRESHOLD, dataset_name="dataset_val", output_dir=OUTPUT_DIR)
+    
+    elif RUN_MODE == "finetune":
+        
+        # Define paths for training, validation, and test images
+        INPUT_DIR_IMAGES_TRAIN = os.path.join(DATASET_DIR, "train")
+        INPUT_DIR_IMAGES_VAL = os.path.join(DATASET_DIR, "val")
+        INPUT_DIR_IMAGES_TEST = os.path.join(DATASET_DIR, "test")
+
+        # Check if json_dir argument was provided    
+        if not args.json_dir:
+            print("Error: --json_dir is a required argument for 'finetune' mode.", file=sys.stderr)
+            sys.exit(1)
+
+        # Verify if json_dir is a valid directory
+        if not os.path.isdir(args.json_dir):
+            print(f"Error: The directory '{args.json_dir}' does not exist or is not a valid directory.", file=sys.stderr)
+            sys.exit(1)
+        
+        # Define paths for the training, validation, and test JSON files
+        INPUT_DIR_JSON = args.json_dir
+        INPUT_DIR_JSON_TRAIN = os.path.join(INPUT_DIR_JSON, "train.json")
+        INPUT_DIR_JSON_VAL = os.path.join(INPUT_DIR_JSON, "val.json")
+        INPUT_DIR_JSON_TEST = os.path.join(INPUT_DIR_JSON, "test.json")
+
+        # Run the fine-tuning process
+        detectron2_run_finetune(model_name=MODEL_CONFIG, model_weights=MODEL_WEIGHTS, 
+                                dataset_train_json=INPUT_DIR_JSON_TRAIN, dataset_train_images=INPUT_DIR_IMAGES_TRAIN, 
+                                dataset_val_json=INPUT_DIR_JSON_VAL, dataset_val_images=INPUT_DIR_IMAGES_VAL, 
+                                dataset_test_json=INPUT_DIR_JSON_TEST, dataset_test_images=INPUT_DIR_IMAGES_TEST, 
+                                output_dir=OUTPUT_DIR)
