@@ -7,8 +7,11 @@ This repository contains the code for the **C5 - Team 4** project.
 ### Session 1 - Object Detection and Recognition
 Refer to the [`README.md`](w1/README.md) file in the corresponding folder for detailed instructions.
 
-### Week 2 - Object Segmentation 
+### Session 2 - Instance Segmentation 
 Refer to the [`README.md`](w2/README.md) file in the corresponding folder for detailed instructions.
+
+### Session 3 - Image Captioning
+Refer to the [`README.md`](w3/captioning/README.md) file in the corresponding folder for detailed instructions.
 
 
 ℹ️ **Instructions**:  
