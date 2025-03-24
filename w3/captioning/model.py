@@ -5,8 +5,9 @@ from config import DEVICE, TEXT_MAX_LEN, USE_WORD_MAPPING, USE_CHAR_MAPPING, USE
 from char_mapping import NUM_TOKENS, char2idx, word2idx, tokenizer_
 
 class CaptioningModel(nn.Module):
-    def __init__(self, encoder="resnet-18", decoder="gru"):
+    def __init__(self, encoder="resnet-18", decoder="gru",teacher_forcing_ratio=0.5):
         super().__init__()
+        self.teacher_forcing_ratio = teacher_forcing_ratio 
         if encoder == "resnet-18":
             self.encoder = ResNetModel.from_pretrained("microsoft/resnet-18").to(DEVICE)
         elif encoder == "resnet-50":
@@ -25,7 +26,7 @@ class CaptioningModel(nn.Module):
         else:
             raise ValueError("Invalid decoder")
 
-    def forward(self, img):
+    def forward(self, img,target=None):
         batch_size = img.shape[0]
         feat = self.encoder(img).pooler_output  # Salida del encoder
         feat = feat.view(batch_size, 1, -1)  
@@ -47,13 +48,17 @@ class CaptioningModel(nn.Module):
         inp = self.embed(torch.full((batch_size, 1), start_idx, dtype=torch.long, device=DEVICE))
 
         outputs = []
-        for _ in range(TEXT_MAX_LEN):
+        
+        for t in range(TEXT_MAX_LEN):
             out, hidden = self.decoder(inp, hidden)
             outputs.append(out)
-            if USE_WORDPIECE_MAPPING:
-                inp = self.embed(torch.argmax(self.proj(out), dim=-1))
+            if target is not None and torch.rand(1).item() < self.teacher_forcing_ratio:
+                inp = self.embed(target[:, t].unsqueeze(1))  # Usamos la palabra real como entrada
             else:
-                inp = out  
+                if USE_WORDPIECE_MAPPING:
+                    inp = self.embed(torch.argmax(self.proj(out), dim=-1))
+                else:
+                    inp = out 
 
         res = torch.cat(outputs, dim=1)
         return self.proj(res).permute(0, 2, 1)

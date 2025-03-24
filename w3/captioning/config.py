@@ -7,16 +7,17 @@ load_dotenv()
 # Device configuration
 DEVICE = "cuda"
 TEXT_MAX_LEN = 201
-BATCH_SIZE = [32, 32, 32, 32, 32, 32, 32, 32]
-EPOCHS = [30, 30, 30, 30, 30, 30, 30, 30]
-LEARNING_RATE = [1e-3, 1e-4, 1e-3, 1e-3, 1e-3, 1e-4, 1e-3, 1e-3]
-OPTIMIZER=["AdamW", "AdamW", "Adam", "SGD", "AdamW", "AdamW", "Adam", "SGD"]
-ENCODER=["resnet-18", "resnet-18", "resnet-18", "resnet-18", "resnet-18", "resnet-18", "resnet-18", "resnet-18"]
-DECODER=["gru", "gru", "gru", "gru", "lstm", "lstm", "lstm", "lstm"]
+BATCH_SIZE = [32]
+EPOCHS = [30]
+LEARNING_RATE = [1e-3]
+OPTIMIZER=["AdamW"]
+ENCODER=["resnet-50"]
+DECODER=["gru"]
+TEACHER = True
 
-USE_WORD_MAPPING = True
-USE_CHAR_MAPPING = False 
-USE_WORDPIECE_MAPPING = False
+USE_WORD_MAPPING = False
+USE_CHAR_MAPPING =  False
+USE_WORDPIECE_MAPPING = True
 TOKENIZER_MODEL = "bert-base-uncased" if USE_WORDPIECE_MAPPING else ""
 
 # Paths

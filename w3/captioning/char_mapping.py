@@ -17,6 +17,8 @@ def tokenize(text):
 
 word2idx = None  
 char2idx = None  
+idx2word = None
+idx2char = None
 # Obtener todas las palabras o caracteres del texto según la configuración
 if USE_WORD_MAPPING:
     all_words = []
@@ -44,7 +46,6 @@ elif USE_CHAR_MAPPING:
     NUM_TOKENS = len(chars)
     char2idx = {char: idx for idx, char in enumerate(chars)}
     idx2char = {idx: char for idx, char in enumerate(chars)}
-    print(f"Ejemplo de mapeo de caracteres: {list(char2idx.items())[:10]}")
 
 elif USE_WORDPIECE_MAPPING:
     # Inicializar el tokenizador de WordPiece

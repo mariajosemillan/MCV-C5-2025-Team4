@@ -5,7 +5,7 @@ from torchvision.transforms import v2
 from PIL import Image
 import pandas as pd
 from config import TEXT_MAX_LEN, DATASET_DIR, USE_WORD_MAPPING, USE_CHAR_MAPPING, USE_WORDPIECE_MAPPING
-from char_mapping import char2idx, word2idx
+from char_mapping import char2idx, word2idx,tokenize
 
 class FoodDataset(Dataset):
     def __init__(self, data, partition, tokenizer=None):
@@ -30,7 +30,8 @@ class FoodDataset(Dataset):
         img = self.img_proc(img)
 
         if USE_WORD_MAPPING:
-            cap_list = caption.split()
+            #cap_list = caption.split()
+            cap_list=tokenize(caption)
         elif USE_CHAR_MAPPING:
             cap_list = list(caption)
         elif USE_WORDPIECE_MAPPING:
