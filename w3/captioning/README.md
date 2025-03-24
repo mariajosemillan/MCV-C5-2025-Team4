@@ -37,4 +37,5 @@ The repository contains the following main scripts:
 - transformer.py: This script implements a transformer-based image captioning model, utilizing a ResNet-18 backbone for image feature extraction and a Transformer decoder to generate captions, with support for different tokenization strategies and evaluation metrics like BLEU, METEOR, and ROUGE.
 - early_stopping.py: Implements early stopping to halt training when the validation loss stops improving, saving the best model weights based on a specified patience and delta.
 - utils.py: Includes utility function for file handling.
-- [Project_presentation.pdf](Project_presentation.pdf): slides with main tasks and results. 
+- [Project_presentation.pdf](Project_presentation.pdf): slides with main tasks and results.
+- [Project_report[first-draft].pdf](https://overleaf.cvc.uab.es/read/gqthgcccwyjq#24c72e). 
