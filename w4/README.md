@@ -31,5 +31,5 @@ The repository contains the following main scripts:
 - ViT-Llama.py: This script trains an image captioning model using ViT and [Llama-3.2-1B and 3B](https://huggingface.co/meta-llama/Llama-3.2-1B) with LoRA, leveraging PEFT for efficient fine-tuning. It preprocesses a custom dataset, computes evaluation metrics (BLEU, ROUGE, METEOR), and logs results to Weights & Biases. The trained model is saved after each epoch and evaluated on a test set.
 - multimodal.py: This script loads a pre-trained [Qwen2.5-VL-7B-Instruct model from Hugging Face](https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct) to generate descriptive titles from images using multimodal processing. It extracts images from a JSON file, generates titles using the model, and saves the results in a CSV file.
 - MLLMutils.py: This script scans a specified folder for images and generates a JSON file containing image paths and text prompts for generating captions. It structures the data to be used by a Qwen model for captioning tasks.
-- [Project_Presentation.pdf](Project_presentation.pdf): slides with main tasks and results.
+- [Project_Presentation.pdf](Project_Presentation.pdf): slides with main tasks and results.
 - [Project_report[second-draft].pdf](https://overleaf.cvc.uab.cat/read/gqthgcccwyjq#24c72e). 
