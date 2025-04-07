@@ -13,6 +13,9 @@ Refer to the [`README.md`](w2/README.md) file in the corresponding folder for de
 ### Session 3 - Image Captioning
 Refer to the [`README.md`](w3/captioning/README.md) file in the corresponding folder for detailed instructions.
 
+### Session 4 - Image Captioning
+Refer to the [`README.md`](w4/README.md) file in the corresponding folder for detailed instructions.
+
 
 ℹ️ **Instructions**:  
 Each week has its own README with specific guidelines. Make sure to check the corresponding files before running the code.
