@@ -1,0 +1,9 @@
+{
+    "model_id": "stabilityai/stable-diffusion-2-1", 
+    "prompt": "A basket filled with a variety of fresh fruits, soft natural lighting, high detail, photorealistic, 8k resolution",
+    "negative_prompt": "apples, pears, apple, pear, malformed fruits, blurry, low quality, cartoon, CGI, oversaturated, unrealistic proportions,",
+    "output_path": "bascket_fruit_2_1_DDPM_negative_prompt.png",
+    "scheduler": true,
+   "num_inference_steps": 50,
+    "guidance_scale": 7.5
+}
