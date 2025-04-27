@@ -2,6 +2,9 @@
 
 This repository contains the code for the **C5 - Team 4** project.
 
+- [Project_Presentation.pdf](FinalPresentation.pdf): slides with main tasks and results from sessions 3-5.
+- [Project_report.pdf](Project_Report.pdf). 
+
 ## Project Structure
 
 ### Session 1 - Object Detection and Recognition
